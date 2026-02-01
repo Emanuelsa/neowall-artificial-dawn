@@ -46,6 +46,8 @@ hypr-oled-protect status  # Check current status
 
 The smart daemon monitors your Hyprland windows. When you have 2+ tiled windows (meaning wallpaper gaps are visible), it starts neowall. When you're fullscreen or have a single window, it stops neowall to save resources.
 
+**Note:** When using smart mode, you'll need a separate wallpaper application running for static wallpaper display when neowall is inactive.
+
 ## Configuration
 
 Edit `~/.config/neowall/config.vibe`:
