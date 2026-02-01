@@ -1,0 +1,9 @@
+# Neowall config for Artificial Dawn
+# Note: install.sh generates this with the correct path for your system
+# This file is provided as a reference/example
+
+default {
+  shader ~/.config/neowall/artificial-dawn.glsl
+  shader_speed 1.0
+  shader_fps 15
+}

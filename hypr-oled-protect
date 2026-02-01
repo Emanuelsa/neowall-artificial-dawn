@@ -1,0 +1,116 @@
+#!/usr/bin/env bash
+# hypr-oled-protect: Smart OLED burn-in protection for Hyprland
+# Starts/stops neowall based on tiled window count
+#
+# Usage:
+#   hypr-oled-protect start    # Start protection daemon
+#   hypr-oled-protect stop     # Stop protection
+#   hypr-oled-protect status   # Show current status
+
+set -euo pipefail
+
+NEOWALL_MIN_WINDOWS=2  # Start neowall when >= this many tiled windows
+PID_FILE="${XDG_RUNTIME_DIR:-/tmp}/hypr-oled-protect.pid"
+
+log() { echo "[oled-protect] $*"; }
+die() { log "Error: $*"; exit 1; }
+
+# Verify we're in a Hyprland session
+[[ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]] || die "Not running inside a Hyprland session"
+[[ -n "${XDG_RUNTIME_DIR:-}" ]] || die "XDG_RUNTIME_DIR not set"
+
+# Verify dependencies
+command -v hyprctl >/dev/null || die "hyprctl not found"
+command -v jq >/dev/null || die "jq not found (sudo pacman -S jq)"
+command -v socat >/dev/null || die "socat not found (sudo pacman -S socat)"
+command -v neowall >/dev/null || die "neowall not found (yay -S neowall-git)"
+
+get_tiled_window_count() {
+    hyprctl clients -j | jq '[.[] | select(.floating == false and .fullscreen == 0)] | length'
+}
+
+start_neowall() {
+    if ! pgrep -x neowall >/dev/null; then
+        log "Starting neowall"
+        neowall &
+    fi
+}
+
+stop_neowall() {
+    if pgrep -x neowall >/dev/null; then
+        log "Stopping neowall"
+        neowall kill 2>/dev/null || pkill -x neowall 2>/dev/null || true
+    fi
+}
+
+check_and_update() {
+    local count
+    count=$(get_tiled_window_count)
+
+    if [[ $count -ge $NEOWALL_MIN_WINDOWS ]]; then
+        start_neowall
+    else
+        stop_neowall
+    fi
+}
+
+monitor_windows() {
+    log "Monitoring windows (neowall starts at >= $NEOWALL_MIN_WINDOWS tiled)"
+
+    # Initial check
+    check_and_update
+
+    # Listen to Hyprland events
+    socat -u UNIX-CONNECT:"$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/.socket2.sock" - | while read -r line; do
+        case "$line" in
+            openwindow*|closewindow*|movewindow*|fullscreen*)
+                check_and_update
+                ;;
+        esac
+    done
+}
+
+case "${1:-}" in
+    start)
+        # Check if already running
+        if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+            log "Already running (PID $(cat "$PID_FILE"))"
+            exit 0
+        fi
+
+        log "Starting OLED protection daemon"
+        echo $$ > "$PID_FILE"
+        monitor_windows
+        ;;
+
+    stop)
+        log "Stopping OLED protection"
+        stop_neowall
+
+        if [[ -f "$PID_FILE" ]]; then
+            kill "$(cat "$PID_FILE")" 2>/dev/null || true
+            rm -f "$PID_FILE"
+        fi
+        ;;
+
+    status)
+        echo "=== OLED Protection Status ==="
+        echo -n "Daemon: "
+        if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+            echo "running (PID $(cat "$PID_FILE"))"
+        else
+            echo "stopped"
+        fi
+
+        echo -n "Neowall: "
+        pgrep -x neowall >/dev/null && echo "running ($(pgrep -x neowall))" || echo "stopped"
+
+        echo "Tiled windows: $(get_tiled_window_count)"
+        echo "Threshold: >= $NEOWALL_MIN_WINDOWS"
+        ;;
+
+    *)
+        echo "Usage: hypr-oled-protect {start|stop|status}"
+        exit 1
+        ;;
+esac
